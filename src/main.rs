@@ -336,7 +336,8 @@ fn build_exact_prefix(judge: &mut Judge, tournament: &TournamentData, reserve_qu
     while !frontier.is_empty() {
         let candidate = frontier.top();
         let need = extraction_cost_upper_bound(frontier.len(), tournament.children[candidate].len());
-        if judge.remaining() < reserve_queries + need {
+        let effective_reserve = effective_prefix_reserve(reserve_queries, exact_order.len(), judge.d);
+        if judge.remaining() < effective_reserve + need {
             break;
         }
         let x = frontier.pop(judge);
@@ -455,6 +456,16 @@ fn compute_reserve_queries(n: usize, d: usize, q: usize) -> usize {
         reserve = reserve.max(n / n_div);
     }
     reserve
+}
+
+fn effective_prefix_reserve(reserve_queries: usize, exact_prefix_len: usize, d: usize) -> usize {
+    let target_mul_d = env_usize("AHC025_PREFIX_TARGET_MUL_D").unwrap_or(2);
+    let reserve_div = env_usize("AHC025_PREFIX_RESERVE_DIV").unwrap_or(5).max(1);
+    if target_mul_d > 0 && exact_prefix_len < target_mul_d * d {
+        reserve_queries / reserve_div
+    } else {
+        reserve_queries
+    }
 }
 
 struct AssignmentState {
