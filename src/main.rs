@@ -438,7 +438,15 @@ fn build_rank_weights(n: usize, d: usize) -> Vec<f64> {
 }
 
 fn compute_reserve_queries(n: usize, d: usize, q: usize) -> usize {
-    let q_div = env_usize("AHC025_RESERVE_Q_DIV").unwrap_or(4).max(1);
+    let low_q_ratio_num = env_usize("AHC025_LOW_Q_RATIO_NUM").unwrap_or(8);
+    let low_q_ratio_den = env_usize("AHC025_LOW_Q_RATIO_DEN").unwrap_or(1).max(1);
+    let default_q_div = env_usize("AHC025_RESERVE_Q_DIV").unwrap_or(4).max(1);
+    let low_q_div = env_usize("AHC025_LOW_Q_DIV").unwrap_or(8).max(1);
+    let q_div = if q * low_q_ratio_den < n * low_q_ratio_num {
+        low_q_div
+    } else {
+        default_q_div
+    };
     let d_coef = env_usize("AHC025_RESERVE_D_COEF").unwrap_or(8);
     let n_div = env_usize("AHC025_RESERVE_N_DIV").unwrap_or(0);
     let offset = env_usize("AHC025_RESERVE_OFFSET").unwrap_or(24);
