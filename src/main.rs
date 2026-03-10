@@ -8,6 +8,10 @@ fn logging_enabled() -> bool {
     std::env::var_os("AHC025_LOG").is_some()
 }
 
+fn env_usize(name: &str) -> Option<usize> {
+    std::env::var(name).ok()?.parse().ok()
+}
+
 fn estimated_imbalance(group_sum: &[f64]) -> f64 {
     if group_sum.is_empty() {
         return 0.0;
@@ -229,12 +233,13 @@ fn heap_pop_cost(heap_size: usize) -> usize {
     if heap_size <= 1 {
         0
     } else {
-        2 * ceil_log2(heap_size) + 2
+        env_usize("AHC025_HEAP_POP_COEF").unwrap_or(2) * ceil_log2(heap_size)
+            + env_usize("AHC025_HEAP_POP_EXTRA").unwrap_or(0)
     }
 }
 
 fn heap_push_cost(new_size: usize) -> usize {
-    ceil_log2(new_size.max(1)) + 1
+    ceil_log2(new_size.max(1)) + env_usize("AHC025_HEAP_PUSH_EXTRA").unwrap_or(0)
 }
 
 fn extraction_cost_upper_bound(heap_size: usize, child_count: usize) -> usize {
@@ -430,6 +435,18 @@ fn build_rank_weights(n: usize, d: usize) -> Vec<f64> {
     (0..n)
         .map(|rank| (MEAN_WEIGHT * (harmonic[n] - harmonic[rank])).min(cap))
         .collect()
+}
+
+fn compute_reserve_queries(n: usize, d: usize, q: usize) -> usize {
+    let q_div = env_usize("AHC025_RESERVE_Q_DIV").unwrap_or(4).max(1);
+    let d_coef = env_usize("AHC025_RESERVE_D_COEF").unwrap_or(8);
+    let n_div = env_usize("AHC025_RESERVE_N_DIV").unwrap_or(0);
+    let offset = env_usize("AHC025_RESERVE_OFFSET").unwrap_or(24);
+    let mut reserve = (q / q_div).min(d_coef * d + offset);
+    if n_div > 0 {
+        reserve = reserve.max(n / n_div);
+    }
+    reserve
 }
 
 struct AssignmentState {
@@ -786,7 +803,7 @@ fn main() {
     let log_enabled = logging_enabled();
     let mut judge = Judge::new();
 
-    let reserve_queries = (judge.q / 4).min(8 * judge.d + 24);
+    let reserve_queries = compute_reserve_queries(judge.n, judge.d, judge.q);
     let (ordering_mode, exact_prefix_len, full_order) =
         if let Some(order) = build_exact_order_by_insertion(&mut judge, reserve_queries) {
             ("insertion", judge.n, order)
