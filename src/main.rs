@@ -336,7 +336,8 @@ fn build_exact_prefix(judge: &mut Judge, tournament: &TournamentData, reserve_qu
     while !frontier.is_empty() {
         let candidate = frontier.top();
         let need = extraction_cost_upper_bound(frontier.len(), tournament.children[candidate].len());
-        let effective_reserve = effective_prefix_reserve(reserve_queries, exact_order.len(), judge.d);
+        let effective_reserve =
+            effective_prefix_reserve(judge.n, judge.d, judge.q, reserve_queries, exact_order.len());
         if judge.remaining() < effective_reserve + need {
             break;
         }
@@ -438,12 +439,19 @@ fn build_rank_weights(n: usize, d: usize) -> Vec<f64> {
         .collect()
 }
 
+fn is_targeted_tournament_regime(n: usize, d: usize, q: usize) -> bool {
+    q < 4 * n && (4..=7).contains(&d)
+}
+
 fn compute_reserve_queries(n: usize, d: usize, q: usize) -> usize {
     let low_q_ratio_num = env_usize("AHC025_LOW_Q_RATIO_NUM").unwrap_or(8);
     let low_q_ratio_den = env_usize("AHC025_LOW_Q_RATIO_DEN").unwrap_or(1).max(1);
     let default_q_div = env_usize("AHC025_RESERVE_Q_DIV").unwrap_or(4).max(1);
     let low_q_div = env_usize("AHC025_LOW_Q_DIV").unwrap_or(8).max(1);
-    let q_div = if q * low_q_ratio_den < n * low_q_ratio_num {
+    let targeted_q_div = env_usize("AHC025_TARGET_REGIME_Q_DIV").unwrap_or(12).max(1);
+    let q_div = if is_targeted_tournament_regime(n, d, q) {
+        targeted_q_div
+    } else if q * low_q_ratio_den < n * low_q_ratio_num {
         low_q_div
     } else {
         default_q_div
@@ -458,9 +466,23 @@ fn compute_reserve_queries(n: usize, d: usize, q: usize) -> usize {
     reserve
 }
 
-fn effective_prefix_reserve(reserve_queries: usize, exact_prefix_len: usize, d: usize) -> usize {
-    let target_mul_d = env_usize("AHC025_PREFIX_TARGET_MUL_D").unwrap_or(2);
-    let reserve_div = env_usize("AHC025_PREFIX_RESERVE_DIV").unwrap_or(5).max(1);
+fn effective_prefix_reserve(
+    n: usize,
+    d: usize,
+    q: usize,
+    reserve_queries: usize,
+    exact_prefix_len: usize,
+) -> usize {
+    let target_mul_d = if is_targeted_tournament_regime(n, d, q) {
+        env_usize("AHC025_TARGET_REGIME_PREFIX_TARGET").unwrap_or(2)
+    } else {
+        env_usize("AHC025_PREFIX_TARGET_MUL_D").unwrap_or(2)
+    };
+    let reserve_div = if is_targeted_tournament_regime(n, d, q) {
+        env_usize("AHC025_TARGET_REGIME_PREFIX_DIV").unwrap_or(4).max(1)
+    } else {
+        env_usize("AHC025_PREFIX_RESERVE_DIV").unwrap_or(5).max(1)
+    };
     if target_mul_d > 0 && exact_prefix_len < target_mul_d * d {
         reserve_queries / reserve_div
     } else {
