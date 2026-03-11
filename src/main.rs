@@ -631,7 +631,9 @@ fn build_swap_candidates(
 ) -> Vec<(usize, usize)> {
     let heavy_candidates = build_ranked_move_candidates(heavy_group, item_weight, diff / 2.0);
     let mut candidates = Vec::new();
-    for &heavy_item in heavy_candidates.iter().take(4) {
+    let heavy_take = env_usize("AHC025_SWAP_HEAVY_TAKE").unwrap_or(5);
+    let light_take = env_usize("AHC025_SWAP_LIGHT_TAKE").unwrap_or(5);
+    for &heavy_item in heavy_candidates.iter().take(heavy_take) {
         let desired_light = (item_weight[heavy_item] - diff / 2.0).max(0.0);
         let mut light_candidates = light_group.to_vec();
         light_candidates.sort_by(|&a, &b| {
@@ -642,7 +644,7 @@ fn build_swap_candidates(
                 .then_with(|| item_weight[a].partial_cmp(&item_weight[b]).unwrap())
                 .then_with(|| a.cmp(&b))
         });
-        for &light_item in light_candidates.iter().take(4) {
+        for &light_item in light_candidates.iter().take(light_take) {
             let pair = (heavy_item, light_item);
             if !candidates.contains(&pair) {
                 candidates.push(pair);
@@ -875,7 +877,8 @@ fn use_remaining_queries(judge: &mut Judge, state: &mut AssignmentState) -> Fina
 
 fn insertion_endgame_swaps(judge: &mut Judge, state: &mut AssignmentState) -> SwapStats {
     let mut stats = SwapStats::default();
-    let max_stalled = 2 * state.groups.len().max(1);
+    let max_stalled = env_usize("AHC025_SWAP_STALLED_FACTOR").unwrap_or(2) * state.groups.len().max(1);
+    let pair_take = env_usize("AHC025_SWAP_PAIR_TAKE").unwrap_or(8);
     while judge.remaining() >= 2 && stats.stalled_rounds < max_stalled {
         let Some(mut hi) = heaviest_movable_group(state) else {
             break;
@@ -899,7 +902,7 @@ fn insertion_endgame_swaps(judge: &mut Judge, state: &mut AssignmentState) -> Sw
         let diff = (state.group_sum[hi] - state.group_sum[lo]).abs();
         let candidates = build_swap_candidates(&state.groups[hi], &state.groups[lo], &state.item_weight, diff);
         let mut swapped = false;
-        for (heavy_item, light_item) in candidates.into_iter().take(6) {
+        for (heavy_item, light_item) in candidates.into_iter().take(pair_take) {
             if judge.remaining() == 0 {
                 break;
             }
