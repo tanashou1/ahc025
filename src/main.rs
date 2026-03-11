@@ -623,6 +623,35 @@ fn build_ranked_move_candidates(heavy_group: &[usize], item_weight: &[f64], targ
     candidates
 }
 
+fn build_swap_candidates(
+    heavy_group: &[usize],
+    light_group: &[usize],
+    item_weight: &[f64],
+    diff: f64,
+) -> Vec<(usize, usize)> {
+    let heavy_candidates = build_ranked_move_candidates(heavy_group, item_weight, diff / 2.0);
+    let mut candidates = Vec::new();
+    for &heavy_item in heavy_candidates.iter().take(4) {
+        let desired_light = (item_weight[heavy_item] - diff / 2.0).max(0.0);
+        let mut light_candidates = light_group.to_vec();
+        light_candidates.sort_by(|&a, &b| {
+            (item_weight[a] - desired_light)
+                .abs()
+                .partial_cmp(&(item_weight[b] - desired_light).abs())
+                .unwrap()
+                .then_with(|| item_weight[a].partial_cmp(&item_weight[b]).unwrap())
+                .then_with(|| a.cmp(&b))
+        });
+        for &light_item in light_candidates.iter().take(4) {
+            let pair = (heavy_item, light_item);
+            if !candidates.contains(&pair) {
+                candidates.push(pair);
+            }
+        }
+    }
+    candidates
+}
+
 fn apply_move(item: usize, from: usize, to: usize, state: &mut AssignmentState) {
     let pos = state.groups[from].iter().position(|&x| x == item).unwrap();
     state.groups[from].swap_remove(pos);
@@ -630,6 +659,24 @@ fn apply_move(item: usize, from: usize, to: usize, state: &mut AssignmentState) 
     state.group_of[item] = to;
     state.group_sum[from] -= state.item_weight[item];
     state.group_sum[to] += state.item_weight[item];
+}
+
+fn replace_item(group: &[usize], remove: usize, add: usize) -> Vec<usize> {
+    group.iter()
+        .copied()
+        .map(|item| if item == remove { add } else { item })
+        .collect()
+}
+
+fn apply_swap(heavy_item: usize, hi: usize, light_item: usize, lo: usize, state: &mut AssignmentState) {
+    let hi_pos = state.groups[hi].iter().position(|&x| x == heavy_item).unwrap();
+    let lo_pos = state.groups[lo].iter().position(|&x| x == light_item).unwrap();
+    state.groups[hi][hi_pos] = light_item;
+    state.groups[lo][lo_pos] = heavy_item;
+    state.group_of[heavy_item] = lo;
+    state.group_of[light_item] = hi;
+    state.group_sum[hi] += state.item_weight[light_item] - state.item_weight[heavy_item];
+    state.group_sum[lo] += state.item_weight[heavy_item] - state.item_weight[light_item];
 }
 
 #[derive(Default)]
@@ -649,6 +696,14 @@ struct FinalQueryStats {
     candidate_queries: usize,
     accepted_moves: usize,
     exhausted_pairs: usize,
+}
+
+#[derive(Default)]
+struct SwapStats {
+    pair_queries: usize,
+    swap_queries: usize,
+    accepted_swaps: usize,
+    stalled_rounds: usize,
 }
 
 fn refine_assignment(judge: &mut Judge, state: &mut AssignmentState) -> RefineStats {
@@ -818,6 +873,57 @@ fn use_remaining_queries(judge: &mut Judge, state: &mut AssignmentState) -> Fina
     stats
 }
 
+fn insertion_endgame_swaps(judge: &mut Judge, state: &mut AssignmentState) -> SwapStats {
+    let mut stats = SwapStats::default();
+    let max_stalled = 2 * state.groups.len().max(1);
+    while judge.remaining() >= 2 && stats.stalled_rounds < max_stalled {
+        let Some(mut hi) = heaviest_movable_group(state) else {
+            break;
+        };
+        let mut lo = lightest_group_excluding(state, hi);
+
+        stats.pair_queries += 1;
+        let cmp = judge.compare_sets(&state.groups[hi], &state.groups[lo]);
+        if cmp == 0 {
+            stats.stalled_rounds += 1;
+            continue;
+        }
+        if cmp < 0 {
+            std::mem::swap(&mut hi, &mut lo);
+        }
+        if state.groups[hi].is_empty() || state.groups[lo].is_empty() {
+            stats.stalled_rounds += 1;
+            continue;
+        }
+
+        let diff = (state.group_sum[hi] - state.group_sum[lo]).abs();
+        let candidates = build_swap_candidates(&state.groups[hi], &state.groups[lo], &state.item_weight, diff);
+        let mut swapped = false;
+        for (heavy_item, light_item) in candidates.into_iter().take(6) {
+            if judge.remaining() == 0 {
+                break;
+            }
+            let left = replace_item(&state.groups[hi], heavy_item, light_item);
+            let right = replace_item(&state.groups[lo], light_item, heavy_item);
+            stats.swap_queries += 1;
+            let swap_cmp = judge.compare_sets(&left, &right);
+            if swap_cmp >= 0 {
+                apply_swap(heavy_item, hi, light_item, lo, state);
+                stats.accepted_swaps += 1;
+                swapped = true;
+                break;
+            }
+        }
+
+        if swapped {
+            stats.stalled_rounds = 0;
+        } else {
+            stats.stalled_rounds += 1;
+        }
+    }
+    stats
+}
+
 fn main() {
     let log_enabled = logging_enabled();
     let mut judge = Judge::new();
@@ -902,11 +1008,35 @@ fn main() {
         );
     }
 
+    let swap_stats = if ordering_mode == "insertion" {
+        insertion_endgame_swaps(&mut judge, &mut state)
+    } else {
+        SwapStats::default()
+    };
+    let queries_after_swaps = judge.used;
+    if log_enabled {
+        eprintln!(
+            "[swap] pair_queries={} swap_queries={} accepted_swaps={} stalled_rounds={} estimated_imbalance={:.3} queries_used={}/{}",
+            swap_stats.pair_queries,
+            swap_stats.swap_queries,
+            swap_stats.accepted_swaps,
+            swap_stats.stalled_rounds,
+            estimated_imbalance(&state.group_sum),
+            queries_after_swaps,
+            judge.q
+        );
+        eprintln!(
+            "[swap] group_sums=[{}] group_sizes=[{}]",
+            format_group_sums(&state.group_sum),
+            format_group_sizes(&state.groups)
+        );
+    }
+
     judge.fill_rest();
     if log_enabled {
         eprintln!(
             "[final] filler_queries={} total_queries={}/{}",
-            judge.used.saturating_sub(queries_after_final_usage),
+            judge.used.saturating_sub(queries_after_swaps),
             judge.used,
             judge.q
         );
